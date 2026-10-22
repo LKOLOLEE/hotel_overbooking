@@ -1,0 +1,5 @@
+-r requirements-core.txt
+# notatnik Jupyter i testy (opcjonalnie; serwer/harmonogram potrzebuje tylko requirements-core.txt)
+jupyter
+ipykernel
+pytest

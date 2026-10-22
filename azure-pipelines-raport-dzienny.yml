@@ -1,0 +1,59 @@
+# Azure DevOps: codzienny raport publikowany jako statyczna strona w Azure Storage.
+# Wymagania: konto Storage z włączonym "Static website" (kontener $web), service connection
+# do subskrypcji Azure z rolą "Storage Blob Data Contributor" na tym koncie.
+# Uzupełnij dwie zmienne poniżej, a w produkcji zamień --replay na:  --as-of today --data <eksport z PMS>
+
+trigger: none
+pr: none
+
+schedules:
+  - cron: "0 6 * * *"            # 06:00 UTC = 08:00 czasu letniego / 07:00 zimowego w Polsce
+    displayName: Raport dzienny
+    branches:
+      include: [ main ]
+    always: true                 # uruchamiaj codziennie, także bez zmian w repozytorium
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  STORAGE_ACCOUNT: "<nazwa-konta-storage>"
+  AZURE_SERVICE_CONNECTION: "<nazwa-service-connection>"
+
+steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: "3.12"
+
+  - script: pip install -r requirements-core.txt
+    displayName: Instalacja bibliotek
+
+  - task: Cache@2
+    displayName: Cache modeli (bez codziennego treningu)
+    inputs:
+      key: 'modele | "$(Agent.OS)" | config.py | src/modeling.py | src/overbooking.py'
+      path: outputs/models
+
+  - task: AzureCLI@2
+    displayName: Pobranie archiwum raportów
+    inputs:
+      azureSubscription: ${{ variables.AZURE_SERVICE_CONNECTION }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        mkdir -p outputs/site
+        az storage blob download-batch --account-name $(STORAGE_ACCOUNT) --auth-mode login \
+          -s '$web' -d outputs/site --pattern 'archiwum/*' || true
+
+  - script: python daily_run.py --replay
+    displayName: Raport dzienny
+
+  - task: AzureCLI@2
+    displayName: Publikacja strony
+    inputs:
+      azureSubscription: ${{ variables.AZURE_SERVICE_CONNECTION }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az storage blob upload-batch --account-name $(STORAGE_ACCOUNT) --auth-mode login \
+          -d '$web' -s outputs/site --overwrite
